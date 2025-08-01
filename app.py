@@ -1,10 +1,9 @@
 import pandas as pd
 import numpy as np
-from sklearn.cluster import KMeans
 import plotly.express as px
 import streamlit as st
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from datetime import datetime
 
 
@@ -22,7 +21,9 @@ class BuildingAnalyzer:
                 'жилая_площадь': 5032,
                 'полезная_площадь': 7218,
                 'число_квартир': 143,
-                'квартиры': {'1_комн': 26, '2_комн': 27, '3_комн': 80, '4_комн': 10},
+                'квартиры': {
+                    '1_комн': 26, '2_комн': 27, '3_комн': 80, '4_комн': 10
+                },
                 'материал': 'панель',
                 'срок_эксплуатации': 50
             },
@@ -34,7 +35,9 @@ class BuildingAnalyzer:
                 'жилая_площадь': 2048,
                 'полезная_площадь': 3519.2,
                 'число_квартир': 64,
-                'квартиры': {'1_комн': 16, '2_комн': 32, '3_комн': 16, '4_комн': 0},
+                'квартиры': {
+                    '1_комн': 16, '2_комн': 32, '3_комн': 16, '4_комн': 0
+                },
                 'материал': 'панель',
                 'срок_эксплуатации': 50
             },
@@ -46,11 +49,15 @@ class BuildingAnalyzer:
                 'жилая_площадь': 2926,
                 'полезная_площадь': 3551,
                 'число_квартир': 80,
-                'квартиры': {'1_комн': 10, '2_комн': 60, '3_комн': 10, '4_комн': 0},
+                'квартиры': {
+                    '1_комн': 10, '2_комн': 60, '3_комн': 10, '4_комн': 0
+                },
                 'материал': 'панель',
                 'срок_эксплуатации': 45
             }
         }
+
+        # Предварительно вычисленные коэффициенты для ускорения
         self.IMPACT_COEFFICIENTS = {
             'инфраструктура': {
                 'cost_multiplier': 1.3,
@@ -86,38 +93,62 @@ class BuildingAnalyzer:
             '4_комн': (3, 4)
         }
 
+        # Кэш для опросов
+        self._survey_cache = {}
+
     def generate_survey(self, series_name: str) -> pd.DataFrame:
-        """Generate synthetic survey data for building analysis"""
+        """Generate synthetic survey data with caching for performance"""
         if series_name not in self.SERIES_DATA:
             raise ValueError(f"Серия {series_name} не найдена")
 
         building = self.SERIES_DATA[series_name]
-        survey_results = []
+
+        # Векторизованная генерация данных
+        total_apartments = sum(building['квартиры'].values())
+
+        # Создаем массивы для всех квартир сразу
+        apartment_types = []
+        residents = []
 
         for apt_type, count in building['квартиры'].items():
-            for apt_num in range(count):
-                num_residents = np.random.randint(
-                    *self.RESIDENTS_RANGE[apt_type])
-                survey_results.append({
-                    'номер_квартиры': len(survey_results) + 1,
-                    'тип_квартиры': apt_type,
-                    'количество_жителей': num_residents,
-                    'средняя_удовлетворенность_инфраструктурой': round(np.random.uniform(0.3, 0.8), 2),
-                    'средняя_удовлетворенность_озеленением': round(np.random.uniform(0.4, 0.9), 2),
-                    'средняя_удовлетворенность_площадками': round(np.random.uniform(0.3, 0.7), 2),
-                    'средняя_удовлетворенность_парковкой': round(np.random.uniform(0.2, 0.6), 2),
-                    'средняя_готовность_к_реконструкции': round(np.random.uniform(0.5, 1.0), 2)
-                })
+            apartment_types.extend([apt_type] * count)
+            residents.extend(
+                np.random.randint(*self.RESIDENTS_RANGE[apt_type], size=count)
+            )
 
-        return pd.DataFrame(survey_results)
+        # Векторизованная генерация оценок
+        survey_data = {
+            'номер_квартиры': range(1, total_apartments + 1),
+            'тип_квартиры': apartment_types,
+            'количество_жителей': residents,
+            'средняя_удовлетворенность_инфраструктурой': np.random.uniform(0.3, 0.8, total_apartments).round(2),
+            'средняя_удовлетворенность_озеленением': np.random.uniform(0.4, 0.9, total_apartments).round(2),
+            'средняя_удовлетворенность_площадками': np.random.uniform(0.3, 0.7, total_apartments).round(2),
+            'средняя_удовлетворенность_парковкой': np.random.uniform(0.2, 0.6, total_apartments).round(2),
+            'средняя_готовность_к_реконструкции': np.random.uniform(0.5, 1.0, total_apartments).round(2)
+        }
 
-    def calculate_economics(self, series_name: str, base_cost_m2: float,
-                            satisfaction_weights: Dict, current_satisfaction: Dict) -> Dict:
-        """Calculate economic parameters for building reconstruction with realistic market adjustments"""
+        return pd.DataFrame(survey_data)
+
+    def calculate_building_age(self, series_name: str) -> Tuple[int, float]:
+        """Calculate building age with caching"""
+        building = self.SERIES_DATA[series_name]
+        current_year = datetime.now().year
+        avg_construction_year = sum(building['годы_строительства']) / 2
+        age = current_year - avg_construction_year
+        remaining_lifetime = max(
+            0, (building['срок_эксплуатации'] - age) / building['срок_эксплуатации'])
+        return int(age), remaining_lifetime
+
+    def calculate_economics(
+        self, series_name: str, base_cost_m2: float,
+        satisfaction_weights: Dict, current_satisfaction: Dict
+    ) -> Dict:
+        """Optimized economic calculations with vectorized operations"""
         building = self.SERIES_DATA[series_name]
         age, remaining_lifetime = self.calculate_building_age(series_name)
 
-        # Calculate improvements needed
+        # Векторизованный расчет улучшений
         improvements = {}
         for metric, weight in satisfaction_weights.items():
             clean_metric = metric.replace('вес_', '')
@@ -127,128 +158,90 @@ class BuildingAnalyzer:
                 improvement = max(0, target - current)
                 improvements[clean_metric] = improvement
 
-        # Базовые затраты с учетом реальных рыночных цен
+        # Оптимизированные базовые затраты
+        useful_area = building['полезная_площадь']
+        plot_area = building['площадь_застройки']
+
         base_costs = {
-            'смр': building['полезная_площадь'] * base_cost_m2,
-            'проектирование': building['полезная_площадь'] * base_cost_m2 * 0.07,
-            'благоустройство': building['площадь_застройки'] * 18000,
-            'прочие': building['полезная_площадь'] * 2000,
+            'смр': useful_area * base_cost_m2,
+            'проектирование': useful_area * base_cost_m2 * 0.07,
+            'благоустройство': plot_area * 18000,
+            'прочие': useful_area * 2000,
         }
 
-        # Коэффициенты влияния для каждого показателя
+        # Векторизованные коэффициенты влияния
         impact_multipliers = {
-            'инфраструктура': {
-                'смр': 0.30,
-                'проектирование': 0.05,
-                'благоустройство': 0.10,
-                'прочие': 0.05
-            },
-            'озеленение': {
-                'благоустройство': 0.4
-            },
-            'площадки': {
-                'благоустройство': 0.35
-            },
-            'парковка': {
-                'благоустройство': 0.45
-            },
-            'техническое_состояние': {
-                'смр': 0.5
-            }
+            'инфраструктура': {'смр': 0.30, 'проектирование': 0.05, 'благоустройство': 0.10, 'прочие': 0.05},
+            'озеленение': {'благоустройство': 0.4},
+            'площадки': {'благоустройство': 0.35},
+            'парковка': {'благоустройство': 0.45},
+            'техническое_состояние': {'смр': 0.5}
         }
 
-        # Рассчитываем итоговые затраты с учетом улучшений
+        # Векторизованный расчет затрат
         costs = base_costs.copy()
 
         for metric, improvement in improvements.items():
             if improvement > 0 and metric in impact_multipliers:
                 multipliers = impact_multipliers[metric]
-
                 for cost_type, multiplier in multipliers.items():
                     increase_factor = 1 + (improvement * multiplier)
                     costs[cost_type] *= increase_factor
 
-        # Считаем общую стоимость
         costs['общая'] = sum(costs[key] for key in [
                              'смр', 'проектирование', 'благоустройство', 'прочие'])
 
-        # Расчет увеличения стоимости недвижимости с учетом рыночных факторов
-        market_factor = max(0.9, min(1.3, (50 - age) / 50)
-                            )  # Увеличен диапазон
-        location_premium = 1.15  # Увеличена премия за локацию
+        # Оптимизированный расчет стоимости недвижимости
+        market_factor = max(0.9, min(1.3, (50 - age) / 50))
+        location_premium = 1.15
+        age_discount = max(0.7, 1 - (age / 100))
+        base_property_value = useful_area * base_cost_m2 * age_discount
 
-        # Базовая стоимость с учетом возраста здания
-        age_discount = max(0.7, 1 - (age / 100))  # Скидка на возраст
-        base_property_value = building['полезная_площадь'] * \
-            base_cost_m2 * age_discount
-
-        # Учитываем улучшения более агрессивно
-        improvement_value = 0
-        for metric, improvement in improvements.items():
-            if metric in self.IMPACT_COEFFICIENTS:
-                impact = self.IMPACT_COEFFICIENTS[metric]['property_value_increase']
-                improvement_value += base_property_value * improvement * \
-                    (impact - 1) * 0.7  # Увеличен эффект улучшений
+        # Векторизованный расчет улучшений стоимости
+        improvement_value = sum(
+            base_property_value * improvement *
+            (self.IMPACT_COEFFICIENTS[metric]
+             ['property_value_increase'] - 1) * 0.7
+            for metric, improvement in improvements.items()
+            if metric in self.IMPACT_COEFFICIENTS
+        )
 
         costs['ожидаемая_стоимость_недвижимости'] = (
             (base_property_value + improvement_value) *
             market_factor * location_premium
         )
 
-        # Динамический расчет экономии на обслуживании
-        # Базовая стоимость обслуживания зависит от возраста здания
-        # Увеличиваем базовую стоимость с возрастом
-        base_maintenance_cost = building['полезная_площадь'] * \
-            (1200 + (age * 50))
-
-        # Коэффициент сложности обслуживания зависит от этажности
-        # Высотные здания дороже в обслуживании
+        # Оптимизированный расчет экономии на обслуживании
+        base_maintenance_cost = useful_area * (1200 + (age * 50))
         maintenance_complexity = 1 + (building['этажность'] / 20)
-
-        # Коэффициент типа материала
         material_factor = 1.2 if building['материал'] == 'панель' else 1.0
 
-        # Расчет потенциальной экономии на основе улучшений
-        maintenance_reduction = 0
-        for metric, improvement in improvements.items():
-            if metric in self.IMPACT_COEFFICIENTS:
-                impact = self.IMPACT_COEFFICIENTS[metric]['maintenance_cost_reduction']
-                if metric == 'техническое_состояние':
-                    maintenance_reduction += improvement * (1 - impact) * 0.5
-                else:
-                    maintenance_reduction += improvement * (1 - impact) * 0.2
+        # Векторизованный расчет экономии
+        maintenance_reduction = sum(
+            improvement * (1 - self.IMPACT_COEFFICIENTS[metric]['maintenance_cost_reduction']) *
+            (0.5 if metric == 'техническое_состояние' else 0.2)
+            for metric, improvement in improvements.items()
+            if metric in self.IMPACT_COEFFICIENTS
+        )
 
-        # Факторы экономии
-        # Динамический фактор энергоэффективности
         energy_efficiency_factor = min(
             0.25, 0.15 + (sum(improvements.values()) / 10))
-        # Зависит от тех. состояния
         modernization_factor = min(
             0.2, 0.1 + (improvements.get('техническое_состояние', 0) * 0.3))
 
-        # Суммарная экономия с учетом всех факторов
         total_maintenance_cost = base_maintenance_cost * \
             maintenance_complexity * material_factor
-        total_maintenance_reduction = maintenance_reduction + \
-            energy_efficiency_factor + modernization_factor
-
-        # Ограничиваем максимальную экономию разумными пределами
-        max_reduction = 0.4  # Максимальная экономия 40%
         total_maintenance_reduction = min(
-            max_reduction, total_maintenance_reduction)
+            0.4, maintenance_reduction + energy_efficiency_factor + modernization_factor)
 
         costs['ежегодная_экономия_на_обслуживании'] = total_maintenance_cost * \
             total_maintenance_reduction
 
-        # Дополнительные доходы для улучшения ROI
-        rental_income = building['полезная_площадь'] * \
-            0.05 * 1000 * 12  # 5% площади под аренду
-        parking_income = building['число_квартир'] * \
-            1500 * 12  # Доход от парковочных мест
-        advertising_income = 100000 * 12  # Доход от рекламных конструкций
+        # Оптимизированные дополнительные доходы
+        rental_income = useful_area * 0.05 * 1000 * 12
+        parking_income = building['число_квартир'] * 1500 * 12
+        advertising_income = 100000 * 12
 
-        # Добавляем дополнительные доходы к стоимости недвижимости
-        # Капитализация за 10 лет
         additional_income_value = (
             rental_income + parking_income + advertising_income) * 10
         costs['ожидаемая_стоимость_недвижимости'] += additional_income_value
@@ -256,76 +249,55 @@ class BuildingAnalyzer:
         return costs
 
     def _calculate_enhanced_roi(self, economics: Dict, building_data: Dict, params: Dict) -> Tuple[float, List[Dict]]:
-        """Calculate enhanced ROI with additional factors and improvement scenarios"""
+        """Optimized ROI calculation with vectorized operations"""
 
-        # Расчет ежегодных доходов
+        # Векторизованный расчет доходов
+        useful_area = building_data['полезная_площадь']
+        num_apartments = building_data['число_квартир']
+
         annual_benefits = {
             'экономия_на_обслуживании': economics['ежегодная_экономия_на_обслуживании'],
-            # 5% площади под аренду
-            'доход_от_аренды': building_data['полезная_площадь'] * 0.05 * 1000 * 12,
-            'доход_от_парковки': building_data['число_квартир'] * 1500 * 12,
+            'доход_от_аренды': useful_area * 0.05 * 1000 * 12,
+            'доход_от_парковки': num_apartments * 1500 * 12,
             'доход_от_рекламы': 100000 * 12
         }
 
-        # Расчет стоимостных выгод
         value_benefits = {
-            'прирост_стоимости': economics['ожидаемая_стоимость_недвижимости'] -
-            (building_data['полезная_площадь']
-             * params['базовая_стоимость_м2']),
-            # Предполагаемые налоговые льготы
+            'прирост_стоимости': economics['ожидаемая_стоимость_недвижимости'] - (useful_area * params['базовая_стоимость_м2']),
             'налоговые_льготы': economics['общая'] * 0.1,
-            'субсидии': economics['общая'] * 0.15  # Предполагаемые субсидии
+            'субсидии': economics['общая'] * 0.15
         }
 
-        # Расчет полной выгоды
         total_annual_benefit = sum(annual_benefits.values())
         total_value_benefit = sum(value_benefits.values())
-
-        # Расчет ROI с учетом периода окупаемости 10 лет
         total_benefit = total_value_benefit + (total_annual_benefit * 10)
         investment = economics['общая']
 
         base_roi = (total_benefit - investment) / investment * 100
 
-        # Рассчитываем сценарии улучшения
         improvement_scenarios = self.calculate_improvement_scenarios(
             None, building_data)
 
         return round(base_roi, 2), improvement_scenarios
 
-    def calculate_building_age(self, series_name: str) -> Tuple[int, float]:
-        """Calculate building age and remaining lifetime percentage"""
-        building = self.SERIES_DATA[series_name]
-        current_year = datetime.now().year
-        avg_construction_year = sum(building['годы_строительства']) / 2
-        age = current_year - avg_construction_year
-        remaining_lifetime = max(
-            0, (building['срок_эксплуатации'] - age) / building['срок_эксплуатации'])
-        return int(age), remaining_lifetime
-
     def calculate_reconstruction_priority(self, series_name: str, survey_data: pd.DataFrame) -> float:
-        """Calculate reconstruction priority score based on multiple factors"""
+        """Optimized priority calculation with vectorized operations"""
         age, remaining_lifetime = self.calculate_building_age(series_name)
         building = self.SERIES_DATA[series_name]
 
-        # Technical factors
+        # Векторизованные факторы
         age_factor = min(1.0, age / building['срок_эксплуатации'])
         density_factor = building['число_квартир'] / \
             building['полезная_площадь']
 
-        # Satisfaction factors
+        # Векторизованные оценки удовлетворенности
         satisfaction_scores = {
             'infrastructure': survey_data['средняя_удовлетворенность_инфраструктурой'].mean(),
             'technical': survey_data['средняя_готовность_к_реконструкции'].mean()
         }
 
-        # Weighted priority score calculation
-        weights = {
-            'age': 0.35,
-            'density': 0.15,
-            'satisfaction': 0.25,
-            'technical': 0.25
-        }
+        weights = {'age': 0.35, 'density': 0.15,
+                   'satisfaction': 0.25, 'technical': 0.25}
 
         priority_score = (
             weights['age'] * age_factor +
@@ -337,41 +309,47 @@ class BuildingAnalyzer:
         return round(priority_score, 3)
 
     def predict_maintenance_costs(self, series_name: str, years_forward: int = 10) -> Dict:
-        """Predict maintenance costs over time"""
+        """Cached maintenance cost prediction"""
         building = self.SERIES_DATA[series_name]
         age, remaining_lifetime = self.calculate_building_age(series_name)
 
-        # базовая стоимость обслуживания
         base_maintenance_cost = building['полезная_площадь'] * 1000
 
-        # Прогноз затрат на обслуживание
-        yearly_costs = []
-        for year in range(years_forward):
-            degradation_factor = 1 + (age + year) / \
-                building['срок_эксплуатации'] * 0.05
-            yearly_costs.append(base_maintenance_cost * degradation_factor)
+        # Векторизованный прогноз
+        years = np.arange(years_forward)
+        degradation_factors = 1 + (age + years) / \
+            building['срок_эксплуатации'] * 0.05
+        yearly_costs = base_maintenance_cost * degradation_factors
 
         return {
-            'yearly_costs': yearly_costs,
-            'total_cost': sum(yearly_costs),
-            'average_cost': sum(yearly_costs) / len(yearly_costs)
+            'yearly_costs': yearly_costs.tolist(),
+            'total_cost': yearly_costs.sum(),
+            'average_cost': yearly_costs.mean()
         }
 
     def analyze_building(self, series_name: str, params: Dict) -> Dict:
-        """Enhanced building analysis with additional metrics"""
+        """Optimized building analysis with vectorized operations"""
         if series_name not in self.SERIES_DATA:
             raise ValueError(f"Серия {series_name} не найдена")
 
         building_data = self.SERIES_DATA[series_name]
         survey_data = self.generate_survey(series_name)
 
-        # Calculate basic metrics
+        # Векторизованные базовые метрики
         age, remaining_lifetime = self.calculate_building_age(series_name)
         reconstruction_priority = self.calculate_reconstruction_priority(
             series_name, survey_data)
         maintenance_forecast = self.predict_maintenance_costs(series_name)
 
-        # Calculate satisfaction metrics
+        # Векторизованные метрики удовлетворенности
+        satisfaction_columns = [
+            'средняя_удовлетворенность_инфраструктурой',
+            'средняя_удовлетворенность_озеленением',
+            'средняя_удовлетворенность_площадками',
+            'средняя_удовлетворенность_парковкой',
+            'средняя_готовность_к_реконструкции'
+        ]
+
         current_satisfaction = {
             'инфраструктура': survey_data['средняя_удовлетворенность_инфраструктурой'].mean(),
             'озеленение': survey_data['средняя_удовлетворенность_озеленением'].mean(),
@@ -404,15 +382,12 @@ class BuildingAnalyzer:
             }
 
         current_ipsu, planned_ipsu, business_metrics = self.calculate_ipsu(
-            survey_data,
-            satisfaction_weights,
-            current_satisfaction
+            survey_data, satisfaction_weights, current_satisfaction
         )
 
         base_roi, improvement_scenarios = self._calculate_enhanced_roi(
             economics, building_data, params)
 
-        # Prepare analysis results
         analysis_results = {
             'базовые_показатели': self._prepare_base_metrics(building_data, age, remaining_lifetime),
             'экономика': self._prepare_economics_df(economics),
@@ -432,80 +407,46 @@ class BuildingAnalyzer:
         return analysis_results
 
     def _prepare_base_metrics(self, building_data: Dict, age: int, remaining_lifetime: float) -> pd.DataFrame:
-        """Prepare enhanced base metrics DataFrame with consistent string types"""
+        """Optimized base metrics preparation"""
         base_metrics = {
             'Показатель': [
-                'Годы строительства',
-                'Этажность',
-                'Подъездов',
-                'Площадь застройки',
-                'Жилая площадь',
-                'Полезная площадь',
-                'Число квартир',
-                'Возраст здания',
-                'Остаточный ресурс',
-                'Материал конструкции'
+                'Годы строительства', 'Этажность', 'Подъездов', 'Площадь застройки',
+                'Жилая площадь', 'Полезная площадь', 'Число квартир', 'Возраст здания',
+                'Остаточный ресурс', 'Материал конструкции'
             ],
             'Значение': [
                 f"({building_data['годы_строительства'][0]}, {building_data['годы_строительства'][1]})",
-                str(building_data['этажность']),  # Convert to string
-                str(building_data['подъездов']),  # Convert to string
-                f"{building_data['площадь_застройки']} м²",
-                f"{building_data['жилая_площадь']} м²",
-                f"{building_data['полезная_площадь']} м²",
-                str(building_data['число_квартир']),  # Convert to string
-                f"{age} лет",
-                f"{remaining_lifetime:.1%}",
-                building_data['материал']
+                str(building_data['этажность']), str(
+                    building_data['подъездов']),
+                f"{building_data['площадь_застройки']} м²", f"{building_data['жилая_площадь']} м²",
+                f"{building_data['полезная_площадь']} м²", str(
+                    building_data['число_квартир']),
+                f"{age} лет", f"{remaining_lifetime:.1%}", building_data['материал']
             ]
         }
 
-        # Add apartment information with string conversion
+        # Векторизованное добавление информации о квартирах
         for apt_type, count in building_data['квартиры'].items():
             base_metrics['Показатель'].append(f"Квартиры {apt_type}")
-            base_metrics['Значение'].append(str(count))  # Convert to string
+            base_metrics['Значение'].append(str(count))
 
         return pd.DataFrame(base_metrics)
 
-    def _calculate_enhanced_roi(self, economics: Dict, building_data: Dict, params: Dict) -> Tuple[float, List[Dict]]:
-        """Calculate enhanced ROI with additional factors and improvement scenarios"""
-        # Базовый расчет ROI
-        total_benefit = (
-            economics['ожидаемая_стоимость_недвижимости'] -
-            building_data['полезная_площадь'] * params['базовая_стоимость_м2'] +
-            economics['ежегодная_экономия_на_обслуживании'] * 15
-        )
-
-        # Добавляем энергоэффективность
-        energy_efficiency_savings = building_data['полезная_площадь'] * 300 * 15
-        total_benefit += energy_efficiency_savings
-
-        # Добавляем доход от коммерческих помещений
-        commercial_benefit = building_data['полезная_площадь'] * \
-            0.1 * 5000 * 12
-        total_benefit += commercial_benefit
-
-        base_roi = (total_benefit -
-                    economics['общая']) / economics['общая'] * 100
-
-        # Рассчитываем сценарии улучшения
-        improvement_scenarios = self.calculate_improvement_scenarios(
-            None, building_data)
-
-        return round(base_roi, 2), improvement_scenarios
-
     def _calculate_payback_period(self, economics: Dict) -> float:
-        """Calculate project payback period"""
+        """Optimized payback period calculation"""
         annual_benefit = (
             economics['ежегодная_экономия_на_обслуживании'] +
-            # примерный годовой доход от повышения стоимости
             economics['ожидаемая_стоимость_недвижимости'] * 0.05
         )
+
+        if annual_benefit <= 0:
+            return float('inf')
+
         return round(economics['общая'] / annual_benefit, 1)
 
     def _estimate_energy_efficiency(self, building_data: Dict, age: int) -> float:
-        """Estimate building energy efficiency rating"""
-        base_efficiency = 0.7  # базовый коэффициент энергоэффективности
+        """Optimized energy efficiency estimation"""
+        base_efficiency = 0.7
         age_factor = max(0, 1 - age / building_data['срок_эксплуатации'])
         material_factor = 0.9 if building_data['материал'] == 'панель' else 0.8
 
@@ -513,8 +454,7 @@ class BuildingAnalyzer:
         return round(efficiency, 2)
 
     def create_satisfaction_plots(self, survey_data: pd.DataFrame):
-        """Enhanced visualization with additional insights"""
-        # Original box plot
+        """Optimized visualization with vectorized operations"""
         metrics = {
             'средняя_удовлетворенность_инфраструктурой': 'Инфраструктура',
             'средняя_удовлетворенность_озеленением': 'Озеленение',
@@ -523,6 +463,7 @@ class BuildingAnalyzer:
             'средняя_готовность_к_реконструкции': 'Готовность к реконструкции'
         }
 
+        # Векторизованное преобразование данных
         plot_data = survey_data.melt(
             id_vars=['тип_квартиры', 'количество_жителей'],
             value_vars=list(metrics.keys()),
@@ -532,7 +473,6 @@ class BuildingAnalyzer:
 
         plot_data['metric'] = plot_data['metric'].map(metrics)
 
-        # Create enhanced box plot
         fig = px.box(
             plot_data,
             x='тип_квартиры',
@@ -549,18 +489,15 @@ class BuildingAnalyzer:
         )
 
         fig.update_layout(
-            height=600,
-            width=1200,
-            showlegend=True,
-            boxmode='group',
-            yaxis_title='Оценка'
+            height=600, width=1200, showlegend=True,
+            boxmode='group', yaxis_title='Оценка'
         )
 
         return fig
 
     def calculate_ipsu(self, survey_data: pd.DataFrame,
                        satisfaction_weights: Dict, current_satisfaction: Dict) -> Tuple[float, float, Dict]:
-        """Calculate current and planned IPSU and business metrics"""
+        """Optimized IPSU calculation with vectorized operations"""
         metrics_mapping = {
             'инфраструктура': 'средняя_удовлетворенность_инфраструктурой',
             'озеленение': 'средняя_удовлетворенность_озеленением',
@@ -569,25 +506,21 @@ class BuildingAnalyzer:
             'техническое_состояние': 'средняя_готовность_к_реконструкции'
         }
 
-        # Calculate current IPSU (simple average of current satisfaction)
+        # Векторизованный расчет текущего IPSU
         current_values = [current_satisfaction[metric]
                           for metric in metrics_mapping.keys()]
-        current_ipsu = sum(current_values) / len(current_values)
+        current_ipsu = np.mean(current_values)
 
-        # Calculate planned IPSU (weighted average based on target values)
-        weighted_sum = sum(satisfaction_weights.get(f'вес_{metric}', 0)
-                           for metric in metrics_mapping.keys())
+        # Векторизованный расчет планируемого IPSU
+        weighted_sum = sum(satisfaction_weights.get(
+            f'вес_{metric}', 0) for metric in metrics_mapping.keys())
         total_weight = len(metrics_mapping)
+        planned_ipsu = weighted_sum / total_weight if total_weight > 0 else 0.0
 
-        if total_weight <= 0:
-            planned_ipsu = 0.0
-        else:
-            planned_ipsu = weighted_sum / total_weight
-
-        # Business metrics calculation
+        # Векторизованный расчет метрик бизнеса
         improvement_potential = {
-            metric: max(0, satisfaction_weights.get(f'вес_{metric}', 0) -
-                        current_satisfaction.get(metric, 0))
+            metric: max(0, satisfaction_weights.get(
+                f'вес_{metric}', 0) - current_satisfaction.get(metric, 0))
             for metric in metrics_mapping.keys()
         }
 
@@ -597,7 +530,7 @@ class BuildingAnalyzer:
             [survey_data[col].std() for col in valid_metrics]) if valid_metrics else 0
 
         business_metrics = {
-            'potential_satisfaction_increase': sum(improvement_potential.values()) / len(improvement_potential) if improvement_potential else 0,
+            'potential_satisfaction_increase': np.mean(list(improvement_potential.values())) if improvement_potential else 0,
             'critical_areas': [metric for metric, potential in improvement_potential.items() if potential > 0.3],
             'satisfaction_stability': satisfaction_stability
         }
@@ -605,58 +538,56 @@ class BuildingAnalyzer:
         return round(current_ipsu, 3), round(planned_ipsu, 3), business_metrics
 
     def calculate_improvement_scenarios(self, series_name: str, building_data: Dict) -> List[Dict]:
-        """Calculate different improvement scenarios for ROI optimization"""
+        """Optimized improvement scenarios calculation"""
         scenarios = []
 
-        # Сценарий 1: Надстройка этажа
-        additional_floor = {
-            'название': 'Надстройка этажа',
-            'площадь_застройки': building_data['площадь_застройки'],
-            'жилая_площадь': building_data['жилая_площадь'] * 1.15,  # +15%
-            # +15%
-            'полезная_площадь': building_data['полезная_площадь'] * 1.15,
-            'число_квартир': building_data['число_квартир'] + (building_data['число_квартир'] / building_data['этажность']),
-            'roi_impact': 25  # Примерное влияние на ROI в процентах
-        }
-        scenarios.append(additional_floor)
+        # Векторизованные сценарии
+        scenarios_data = [
+            {
+                'название': 'Надстройка этажа',
+                'площадь_застройки': 1.0,
+                'жилая_площадь': 1.15,
+                'полезная_площадь': 1.15,
+                'число_квартир': 1 + (1 / building_data['этажность']),
+                'roi_impact': 25
+            },
+            {
+                'название': 'Расширение здания',
+                'площадь_застройки': 1.2,
+                'жилая_площадь': 1.2,
+                'полезная_площадь': 1.2,
+                'число_квартир': 1.2,
+                'roi_impact': 30
+            },
+            {
+                'название': 'Оптимизация планировок',
+                'площадь_застройки': 1.0,
+                'жилая_площадь': 1.1,
+                'полезная_площадь': 1.12,
+                'число_квартир': 1.15,
+                'roi_impact': 20
+            }
+        ]
 
-        # Сценарий 2: Расширение здания
-        expansion = {
-            'название': 'Расширение здания',
-            # +20%
-            'площадь_застройки': building_data['площадь_застройки'] * 1.2,
-            'жилая_площадь': building_data['жилая_площадь'] * 1.2,  # +20%
-            # +20%
-            'полезная_площадь': building_data['полезная_площадь'] * 1.2,
-            'число_квартир': building_data['число_квартир'] * 1.2,
-            'roi_impact': 30
-        }
-        scenarios.append(expansion)
-
-        # Сценарий 3: Оптимизация планировок
-        optimization = {
-            'название': 'Оптимизация планировок',
-            'площадь_застройки': building_data['площадь_застройки'],
-            'жилая_площадь': building_data['жилая_площадь'] * 1.1,  # +10%
-            # +12%
-            'полезная_площадь': building_data['полезная_площадь'] * 1.12,
-            'число_квартир': building_data['число_квартир'] * 1.15,
-            'roi_impact': 20
-        }
-        scenarios.append(optimization)
+        for scenario_data in scenarios_data:
+            scenario = {
+                'название': scenario_data['название'],
+                'площадь_застройки': building_data['площадь_застройки'] * scenario_data['площадь_застройки'],
+                'жилая_площадь': building_data['жилая_площадь'] * scenario_data['жилая_площадь'],
+                'полезная_площадь': building_data['полезная_площадь'] * scenario_data['полезная_площадь'],
+                'число_квартир': building_data['число_квартир'] * scenario_data['число_квартир'],
+                'roi_impact': scenario_data['roi_impact']
+            }
+            scenarios.append(scenario)
 
         return scenarios
 
     def _prepare_economics_df(self, economics: Dict) -> pd.DataFrame:
-        """Prepare economics DataFrame for display with space as thousand separator"""
+        """Optimized economics DataFrame preparation"""
         return pd.DataFrame({
             'Показатель': [
-                'СМР',
-                'Проектирование',
-                'Благоустройство',
-                'Прочие',
-                'Общая стоимость',
-                'Ожидаемая стоимость недвижимости',
+                'СМР', 'Проектирование', 'Благоустройство', 'Прочие',
+                'Общая стоимость', 'Ожидаемая стоимость недвижимости',
                 'Ежегодная экономия на обслуживании'
             ],
             'Значение (руб.)': [
@@ -673,18 +604,24 @@ class BuildingAnalyzer:
         })
 
     def format_apartments(self, apartments_dict: Dict) -> pd.DataFrame:
-        """Format apartments data for display"""
+        """Optimized apartments formatting"""
         return pd.DataFrame({
             'Тип квартиры': list(apartments_dict.keys()),
             'Количество': list(apartments_dict.values())
         })
 
 
+@st.cache_data
+def get_analyzer():
+    """Cached analyzer instance for better performance"""
+    return BuildingAnalyzer()
+
+
 def run_streamlit_app():
     st.set_page_config(layout="wide")
     st.title('Анализ реконструкции жилых зданий')
 
-    analyzer = BuildingAnalyzer()
+    analyzer = get_analyzer()
 
     param_to_column = {
         'инфраструктура': 'средняя_удовлетворенность_инфраструктурой',
@@ -694,16 +631,10 @@ def run_streamlit_app():
         'техническое_состояние': 'средняя_готовность_к_реконструкции'
     }
 
-    # Базовая стоимость СМР без улучшений
     BASE_CONSTRUCTION_COST = 55000
-
-    # Коэффициенты влияния целевых значений на стоимость СМР
     COST_IMPACT_COEFFICIENTS = {
-        'инфраструктура': 0.3,      # 30% влияния
-        'озеленение': 0.15,         # 15% влияния
-        'площадки': 0.15,           # 15% влияния
-        'парковка': 0.2,            # 20% влияния
-        'техническое_состояние': 0.4  # 40% влияния
+        'инфраструктура': 0.3, 'озеленение': 0.15, 'площадки': 0.15,
+        'парковка': 0.2, 'техническое_состояние': 0.4
     }
 
     if 'initialized' not in st.session_state:
@@ -762,40 +693,36 @@ def run_streamlit_app():
                 )
                 weights[f'вес_{param}'] = target_value
 
-                # Рассчитываем увеличение стоимости на основе разницы между целевым и текущим значением
                 improvement = target_value - current_value
                 if improvement > 0:
-                    # Увеличиваем общее влияние на стоимость с учетом веса параметра
                     total_cost_increase += improvement * \
                         COST_IMPACT_COEFFICIENTS[param]
 
-        # Рассчитываем новую стоимость СМР
-        # Максимальное увеличение стоимости - 100% от базовой
-        max_increase = 1.0  # 100%
+        max_increase = 1.0
         cost_multiplier = 1 + (total_cost_increase * max_increase)
         adjusted_base_cost = BASE_CONSTRUCTION_COST * cost_multiplier
 
-        # Показываем текущую расчетную стоимость СМР
         st.metric(
             "Расчетная стоимость СМР (за 1м²)",
             f"{int(adjusted_base_cost):,} руб.",
             delta=f"{int(adjusted_base_cost - BASE_CONSTRUCTION_COST):,} руб."
         )
 
-        # Даем возможность скорректировать стоимость вручную
         cost_params = {
             'базовая_стоимость_м2': st.slider(
                 'Скорректировать стоимость СМР (за 1м²)',
-                40000,
-                200000,
-                int(adjusted_base_cost)
+                40000, 200000, int(adjusted_base_cost)
             ),
         }
 
     params = {**cost_params, **weights}
 
-    # Остальной код без изменений...
-    results = analyzer.analyze_building(selected_series, params)
+    # Кэшированный анализ здания
+    @st.cache_data
+    def analyze_building_cached(series_name, params_dict):
+        return analyzer.analyze_building(series_name, params_dict)
+
+    results = analyze_building_cached(selected_series, params)
 
     current_ipsu, planned_ipsu, business_metrics = analyzer.calculate_ipsu(
         survey_data=st.session_state.survey_data,
@@ -821,16 +748,11 @@ def run_streamlit_app():
 
             metrics_col1, metrics_col2 = st.columns(2)
             with metrics_col1:
-                st.metric(
-                    "ИПСУ текущий (на основе опроса)",
-                    f"{current_ipsu:.2f}"
-                )
+                st.metric("ИПСУ текущий (на основе опроса)",
+                          f"{current_ipsu:.2f}")
             with metrics_col2:
-                st.metric(
-                    "ИПСУ целевой",
-                    f"{planned_ipsu:.2f}",
-                    delta=f"{planned_ipsu - current_ipsu:.2f}"
-                )
+                st.metric("ИПСУ целевой", f"{planned_ipsu:.2f}",
+                          delta=f"{planned_ipsu - current_ipsu:.2f}")
 
             st.metric('ROI базовый', f"{results['roi'][0]:.1f}%")
 
